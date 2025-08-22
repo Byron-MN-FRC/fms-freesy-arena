@@ -10,6 +10,9 @@ import (
 	//"github.com/Team254/cheesy-arena/model"
 	"encoding/json"
 	"net/http"
+	"strconv"
+
+	"github.com/Team254/cheesy-arena/field"
 )
 
 // RequestPayload represents the structure of the incoming POST data.
@@ -111,6 +114,86 @@ func (web *Web) fieldStackLightGetHandler(w http.ResponseWriter, r *http.Request
 	response, err := json.Marshal(stackLight)
 	if err != nil {
 		http.Error(w, "Failed to marshal eStop state", http.StatusInternalServerError)
+		return
+	}
+
+	// Send the response.
+	w.Write(response)
+}
+
+type lightState struct {
+	Color string `json:"color"`
+	Blink bool `json:"blink"`
+}
+// Structure representing one light fixture
+// Each lightState represents one light in the stack.
+type teamStackLight struct {
+	LightStates [2]lightState `json:"lightStates"`
+}
+// Structure that represents all of the team stack lights
+type allStackLights struct {
+	Red [3]teamStackLight `json:"red"`
+	Blue [3]teamStackLight `json:"blue"`
+}
+func (web *Web) teamStackLightGetHandler(w http.ResponseWriter, r *http.Request) {
+		// Ensure the request is a GET request.
+		// See the team_sign.go method: generateTeamNumberTexts for the template
+	if r.Method != http.MethodGet {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var stackLights allStackLights
+	// stackLights.Red = [3]teamStackLight
+	// stackLights.Blue = [3]teamStackLight
+
+	for team, allianceStation := range web.arena.AllianceStations { 
+		var teamStackLights = &stackLights.Blue
+		var allianceColor = "blue"
+		if team[0] == 'R'	{
+			teamStackLights = &stackLights.Red
+			allianceColor = "red"
+		}
+		dsN,_ := strconv.Atoi(string(team[1]))
+		teamStackLight := &teamStackLights[dsN-1]
+		//  The lights are as follows:
+		//  L2: Blue/Red
+		//     off: Connection est. to robot
+		//     solid: Robot enabled
+		//     flash: no connection to robot or bypassed
+		//  L1: Amber
+		//     off: Estop not pressed/disabled
+		//     solid: Estop pressed/enabled
+		//     flash: Astop pressed/enabled during autonomous period
+
+		// Light/Layer 1
+		if allianceStation.EStop {
+			teamStackLight.LightStates[0] = lightState{Color: "orange", Blink: false}
+		} else if allianceStation.AStop && web.arena.MatchState == field.AutoPeriod {
+			teamStackLight.LightStates[0] = lightState{Color: "orange", Blink: true}
+		} else {
+			teamStackLight.LightStates[0] = lightState{Color: "black", Blink: false}
+		}
+
+		// Light/Layer 2
+		if allianceStation.DsConn != nil && !allianceStation.DsConn.RobotLinked  {
+			if web.arena.MatchState == field.AutoPeriod || web.arena.MatchState == field.PausePeriod || web.arena.MatchState == field.TeleopPeriod {
+				// Robot connected during match
+				teamStackLight.LightStates[1] = lightState{Color: "black", Blink: false} 
+			} else {
+				// Robot enabled 
+				teamStackLight.LightStates[1] = lightState{Color: allianceColor, Blink: false}
+			}
+		} else {
+			// Not linked.
+			teamStackLight.LightStates[1] = lightState{Color: allianceColor, Blink: true}
+		}
+	}
+
+	// Marshal the response payload.
+	response, err := json.Marshal(stackLights)
+	if err != nil {
+		http.Error(w, "Failed to marshal team stacklights state", http.StatusInternalServerError)
 		return
 	}
 
