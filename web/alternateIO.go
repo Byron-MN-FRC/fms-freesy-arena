@@ -166,27 +166,48 @@ func (web *Web) teamStackLightGetHandler(w http.ResponseWriter, r *http.Request)
 		//     solid: Estop pressed/enabled
 		//     flash: Astop pressed/enabled during autonomous period
 
-		// Light/Layer 1
+
+		// Light/Layer 1 - Stop States
 		if allianceStation.EStop {
-			teamStackLight.LightStates[0] = lightState{Color: "orange", Blink: false}
+			teamStackLight.LightStates[0] = lightState{Color: "orangered", Blink: false}
 		} else if allianceStation.AStop && web.arena.MatchState == field.AutoPeriod {
-			teamStackLight.LightStates[0] = lightState{Color: "orange", Blink: true}
+			teamStackLight.LightStates[0] = lightState{Color: "orangered", Blink: true}
 		} else {
 			teamStackLight.LightStates[0] = lightState{Color: "black", Blink: false}
 		}
 
-		// Light/Layer 2
-		if allianceStation.DsConn != nil && !allianceStation.DsConn.RobotLinked  {
+		// Light/Layer 2 - Robot States
+		// Blink with any problem 
+		// Solid during the match if all is good.
+		// Off off-match if all is good.
+		var ok = true;
+		if allianceStation.Bypass {
+			ok = false
+			// This is always false for some reason
+		// } else if !allianceStation.Ethernet {
+		// 	ok = false
+		} else if allianceStation.DsConn == nil {
+			ok = false
+		} else if allianceStation.DsConn.WrongStation != "" {
+			ok = false
+		} else if !allianceStation.DsConn.RadioLinked {
+			ok = false
+		} else if !allianceStation.DsConn.RioLinked {
+			ok = false
+		} else if !allianceStation.DsConn.RobotLinked {
+			ok = false
+		}
+
+		if ok { 
 			if web.arena.MatchState == field.AutoPeriod || web.arena.MatchState == field.PausePeriod || web.arena.MatchState == field.TeleopPeriod {
-				// Robot connected during match
-				teamStackLight.LightStates[1] = lightState{Color: "black", Blink: false} 
-			} else {
-				// Robot enabled 
+				// Robot enabled during match
 				teamStackLight.LightStates[1] = lightState{Color: allianceColor, Blink: false}
+			} else {
+				// Robot connected outside of the match
+				teamStackLight.LightStates[1] = lightState{Color: "black", Blink: false}
 			}
 		} else {
-			// Not linked.
-			teamStackLight.LightStates[1] = lightState{Color: allianceColor, Blink: true}
+			teamStackLight.LightStates[1] = lightState{Color: allianceColor, Blink: true}		
 		}
 	}
 
