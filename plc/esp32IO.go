@@ -38,6 +38,7 @@ type Esp32 interface {
 	UpdateBlueEstopsLastSeen()
 	UpdateRedHubLastSeen()
 	UpdateBlueHubLastSeen()
+	UpdateLastSeenFromAddress(string) bool
 	SetScoreTableAddress(string) 
 	SetRedAllianceStationEstopAddress(string) 
 	SetBlueAllianceStationEstopAddress(string) 
@@ -321,8 +322,9 @@ func (esp32 *Esp32IO) IsBlueHubHealthy() bool {
 	return esp32.BlueHubHealthy
 }
 
-// Activity timeout for determining if a module is still actively calling the API.
-const ModuleActivityTimeoutSec = 2
+// Activity timeout for determining if a module is still actively calling the API. Modules typically poll every
+// second or two, so this needs enough slack to absorb wifi jitter without flapping the status badge.
+const ModuleActivityTimeoutSec = 5
 
 // Updates the last seen timestamp for the Score Table module.
 func (esp32 *Esp32IO) UpdateScoreTableLastSeen() {
@@ -347,6 +349,50 @@ func (esp32 *Esp32IO) UpdateRedHubLastSeen() {
 // Updates the last seen timestamp for the Blue Hub module.
 func (esp32 *Esp32IO) UpdateBlueHubLastSeen() {
 	esp32.BlueHubLastSeen = time.Now()
+}
+
+// Updates the last seen timestamp for whichever module is configured at the given remote address (an "ip:port"
+// string as found in http.Request.RemoteAddr, or a bare IP). Used as a fallback for API calls that don't identify
+// the calling module explicitly. Returns whether the address matched a configured module.
+func (esp32 *Esp32IO) UpdateLastSeenFromAddress(remoteAddr string) bool {
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = h
+	}
+	remoteIp := net.ParseIP(host)
+	if remoteIp == nil {
+		return false
+	}
+
+	matches := func(configured string) bool {
+		if configured == "" {
+			return false
+		}
+		return remoteIp.Equal(net.ParseIP(configured))
+	}
+
+	matched := false
+	if matches(esp32.ScoreTableIP) {
+		esp32.UpdateScoreTableLastSeen()
+		matched = true
+	}
+	if matches(esp32.RedAllianceEstopsIP) {
+		esp32.UpdateRedEstopsLastSeen()
+		matched = true
+	}
+	if matches(esp32.BlueAllianceEstopsIP) {
+		esp32.UpdateBlueEstopsLastSeen()
+		matched = true
+	}
+	if matches(esp32.RedAllianceHubIP) {
+		esp32.UpdateRedHubLastSeen()
+		matched = true
+	}
+	if matches(esp32.BlueAllianceHubIP) {
+		esp32.UpdateBlueHubLastSeen()
+		matched = true
+	}
+	return matched
 }
 
 // Returns whether the Score Table module is actively calling the API.

@@ -4,13 +4,14 @@ package web
 
 import (
 	"encoding/json"
+	"github.com/Team254/cheesy-arena/field"
+	"github.com/Team254/cheesy-arena/plc"
+	"github.com/stretchr/testify/assert"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/Team254/cheesy-arena/field"
-	"github.com/stretchr/testify/assert"
 )
 
 func (web *Web) postJsonHttpResponse(path string, body string) *httptest.ResponseRecorder {
@@ -112,4 +113,84 @@ func TestStackLightHandlersTrackLastSeen(t *testing.T) {
 	recorder = web.getHttpResponse("/api/freezy/team_stack_light?alliance=blue")
 	assert.Equal(t, 200, recorder.Code)
 	assert.True(t, web.arena.Esp32.IsBlueEstopsActive())
+}
+
+// Sends a request that appears to originate from the given remote address, as an ESP32 module on the field would.
+func (web *Web) httpResponseFrom(method, path, body, remoteAddr string) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	req, _ := http.NewRequest(method, path, reader)
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = remoteAddr
+	web.newHandler().ServeHTTP(recorder, req)
+	return recorder
+}
+
+func TestTeamStackLightFallsBackToRemoteAddress(t *testing.T) {
+	web := setupTestWeb(t)
+	web.arena.Esp32.SetRedAllianceStationEstopAddress("10.0.100.21")
+	web.arena.Esp32.SetBlueAllianceStationEstopAddress("10.0.100.22")
+
+	// Older firmware polls without the alliance parameter; the source IP identifies the module.
+	recorder := web.httpResponseFrom("GET", "/api/freezy/team_stack_light", "", "10.0.100.22:40001")
+	assert.Equal(t, 200, recorder.Code)
+	assert.False(t, web.arena.Esp32.IsRedEstopsActive())
+	assert.True(t, web.arena.Esp32.IsBlueEstopsActive())
+
+	// An explicit alliance parameter wins over the source address.
+	recorder = web.httpResponseFrom("GET", "/api/freezy/team_stack_light?alliance=red", "", "10.0.100.22:40002")
+	assert.Equal(t, 200, recorder.Code)
+	assert.True(t, web.arena.Esp32.IsRedEstopsActive())
+
+	// An unknown source without the parameter leaves everything untouched.
+	web.arena.Esp32 = newTestEsp32WithEstops()
+	recorder = web.httpResponseFrom("GET", "/api/freezy/team_stack_light", "", "10.0.100.99:40003")
+	assert.Equal(t, 200, recorder.Code)
+	assert.False(t, web.arena.Esp32.IsRedEstopsActive())
+	assert.False(t, web.arena.Esp32.IsBlueEstopsActive())
+}
+
+func TestHubStatusGetFallsBackToRemoteAddress(t *testing.T) {
+	web := setupTestWeb(t)
+	web.arena.Esp32.SetRedAllianceHubAddress("10.0.100.23")
+	web.arena.Esp32.SetBlueAllianceHubAddress("10.0.100.24")
+
+	recorder := web.httpResponseFrom("GET", "/api/freezy/hub_status", "", "10.0.100.23:40001")
+	assert.Equal(t, 200, recorder.Code)
+	assert.True(t, web.arena.Esp32.IsRedHubActive())
+	assert.False(t, web.arena.Esp32.IsBlueHubActive())
+}
+
+func TestEstopAndStartAndCoilsEndpointsTrackActivity(t *testing.T) {
+	web := setupTestWeb(t)
+	web.arena.Esp32.SetScoreTableAddress("10.0.100.20")
+	web.arena.Esp32.SetRedAllianceStationEstopAddress("10.0.100.21")
+	web.arena.Esp32.SetBlueAllianceStationEstopAddress("10.0.100.22")
+
+	// Blue estops box POSTs its stop states.
+	recorder := web.httpResponseFrom("POST", "/api/freezy/eStopState", `[{"channel":0,"state":true}]`, "10.0.100.22:40001")
+	assert.Equal(t, 200, recorder.Code)
+	assert.True(t, web.arena.Esp32.IsBlueEstopsActive())
+	assert.False(t, web.arena.Esp32.IsRedEstopsActive())
+	assert.False(t, web.arena.Esp32.IsScoreTableActive())
+
+	// Red estops box polls the coil map.
+	recorder = web.httpResponseFrom("GET", "/api/freezy/alternateIO/PLC_Coils", "", "10.0.100.21:40002")
+	assert.Equal(t, 200, recorder.Code)
+	assert.True(t, web.arena.Esp32.IsRedEstopsActive())
+
+	// Score table box presses start. The match won't actually start in the test arena, but the box is still alive.
+	recorder = web.httpResponseFrom("POST", "/api/freezy/startMatch", "", "10.0.100.20:40003")
+	assert.Equal(t, 200, recorder.Code)
+	assert.True(t, web.arena.Esp32.IsScoreTableActive())
+}
+
+func newTestEsp32WithEstops() *plc.Esp32IO {
+	esp32 := new(plc.Esp32IO)
+	esp32.SetRedAllianceStationEstopAddress("10.0.100.21")
+	esp32.SetBlueAllianceStationEstopAddress("10.0.100.22")
+	return esp32
 }

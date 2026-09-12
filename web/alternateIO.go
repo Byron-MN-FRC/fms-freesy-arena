@@ -48,10 +48,19 @@ func (web *Web) eStopStatePostHandler(w http.ResponseWriter, r *http.Request) {
     	web.arena.Plc.SetAlternateIOStopState(item.Channel, item.State)
 	}
 
+	// Track which module is calling; stop updates don't identify the sender, so match on its address.
+	web.trackEsp32ActivityByAddress(r)
+
 	// Respond with success.
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("eStop state updated successfully."))
 
+}
+
+// Marks whichever ESP32 module is configured at the request's source IP as active. Handlers whose payloads
+// don't identify the calling module use this so the module still shows as responding on the match play page.
+func (web *Web) trackEsp32ActivityByAddress(r *http.Request) {
+	web.arena.Esp32.UpdateLastSeenFromAddress(r.RemoteAddr)
 }
 
 func (web *Web) getAllPlcCoilsGetHandler(w http.ResponseWriter, r *http.Request) {
@@ -60,6 +69,9 @@ func (web *Web) getAllPlcCoilsGetHandler(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
+
+	// Track which module is polling.
+	web.trackEsp32ActivityByAddress(r)
 
 	// Get the current state of all PLC coils.
     coilsArray := web.arena.Plc.GetAllCoils()
@@ -91,6 +103,9 @@ func (web *Web) startMatchPostHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
+
+	// Track which module is calling.
+	web.trackEsp32ActivityByAddress(r)
 
 	// Start the match.
 	web.arena.StartMatch()
@@ -155,12 +170,15 @@ func (web *Web) teamStackLightGetHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Track which estops module is calling via the alliance query parameter.
+	// Track which estops module is calling via the alliance query parameter, falling back to the caller's address
+	// for firmware that doesn't send the parameter.
 	switch strings.ToLower(r.URL.Query().Get("alliance")) {
 	case "red", "r":
 		web.arena.Esp32.UpdateRedEstopsLastSeen()
 	case "blue", "b":
 		web.arena.Esp32.UpdateBlueEstopsLastSeen()
+	default:
+		web.trackEsp32ActivityByAddress(r)
 	}
 
 	var stackLights allStackLights
@@ -260,12 +278,14 @@ func (web *Web) teamHubStateGetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Track which hub module is calling via the alliance query parameter.
+	// Track which hub module is calling via the alliance query parameter, falling back to the caller's address.
 	switch strings.ToLower(r.URL.Query().Get("alliance")) {
 	case "red", "r":
 		web.arena.Esp32.UpdateRedHubLastSeen()
 	case "blue", "b":
 		web.arena.Esp32.UpdateBlueHubLastSeen()
+	default:
+		web.trackEsp32ActivityByAddress(r)
 	}
 
 	var hubStates hubStates
