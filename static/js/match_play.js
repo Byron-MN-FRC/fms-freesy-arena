@@ -316,8 +316,13 @@ const handleArenaStatus = function (data) {
 
   if (data.ScoreTableIOEnabled) {
     if (data.ScoreTableIOIsHealthy) {
-      $("#scoreTableIO").text("Score Connected");
-      $("#scoreTableIO").attr("data-ready", 2);
+      if (data.ScoreTableIOIsActive) {
+        $("#scoreTableIO").text("Score Connected");
+        $("#scoreTableIO").attr("data-ready", 2);
+      } else {
+        $("#scoreTableIO").text("Score Not Responding");
+        $("#scoreTableIO").attr("data-ready", 3);
+      }
     } else {
       $("#scoreTableIO").text("Score Not Connected");
       $("#scoreTableIO").attr("data-ready", 1);
@@ -326,10 +331,15 @@ const handleArenaStatus = function (data) {
     $("#scoreTableIO").text("Score Disabled");
     $("#scoreTableIO").attr("data-ready", 0);
   }
-  if (data.RedEstopsEnabled) {  
+  if (data.RedEstopsEnabled) {
     if (data.RedEstopsIsHealthy) {
-      $("#redEstopsIO").text("Red Estops Connected");
-      $("#redEstopsIO").attr("data-ready", 2);
+      if (data.RedEstopsIsActive) {
+        $("#redEstopsIO").text("Red Estops Connected");
+        $("#redEstopsIO").attr("data-ready", 2);
+      } else {
+        $("#redEstopsIO").text("Red Estops Not Responding");
+        $("#redEstopsIO").attr("data-ready", 3);
+      }
     } else {
       $("#redEstopsIO").text("Red Estops Not Connected");
       $("#redEstopsIO").attr("data-ready", 1);
@@ -340,8 +350,13 @@ const handleArenaStatus = function (data) {
   }
   if (data.BlueEstopsEnabled) {
     if (data.BlueEStopsIsHealthy) {
-      $("#blueEstopsIO").text("Blue Estops Connected");
-      $("#blueEstopsIO").attr("data-ready", 2);
+      if (data.BlueEstopsIsActive) {
+        $("#blueEstopsIO").text("Blue Estops Connected");
+        $("#blueEstopsIO").attr("data-ready", 2);
+      } else {
+        $("#blueEstopsIO").text("Blue Estops Not Responding");
+        $("#blueEstopsIO").attr("data-ready", 3);
+      }
     } else {
       $("#blueEstopsIO").text("Blue Estops Not Connected");
       $("#blueEstopsIO").attr("data-ready", 1);
@@ -350,7 +365,29 @@ const handleArenaStatus = function (data) {
     $("#blueEstopsIO").text("Blue Estops Disabled");
     $("#blueEstopsIO").attr("data-ready", 0);
   }
+  updateHubBadge("#redHubIO", "Red Hub", data.RedHubEnabled, data.RedHubIsHealthy, data.RedHubIsActive,
+    data.RedHubBatteryVoltage, data.RedHubBatteryPercent);
+  updateHubBadge("#blueHubIO", "Blue Hub", data.BlueHubEnabled, data.BlueHubIsHealthy, data.BlueHubIsActive,
+    data.BlueHubBatteryVoltage, data.BlueHubBatteryPercent);
   $("#ftaReady").attr("data-ready", data.IsFtaReady);
+};
+
+// Updates one hub device status badge, including battery readout when the hub is reporting it.
+const updateHubBadge = function (selector, label, enabled, healthy, active, voltage, percent) {
+  if (!enabled) {
+    $(selector).text(label + " Disabled");
+    $(selector).attr("data-ready", 0);
+  } else if (!healthy) {
+    $(selector).text(label + " Not Connected");
+    $(selector).attr("data-ready", 1);
+  } else if (!active) {
+    $(selector).text(label + " Not Responding");
+    $(selector).attr("data-ready", 3);
+  } else {
+    const batteryText = voltage > 0 ? ` ${voltage.toFixed(1)}V ${percent.toFixed(0)}%` : "";
+    $(selector).text(label + batteryText);
+    $(selector).attr("data-ready", 2);
+  }
 };
 
 // Handles a websocket message to update the teams for the current match.

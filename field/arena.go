@@ -229,6 +229,8 @@ func (arena *Arena) LoadSettings() error {
 	arena.Esp32.SetScoreTableAddress(settings.ScoreTableEstopAddress)
 	arena.Esp32.SetRedAllianceStationEstopAddress(settings.RedAllianceStationEstopAddress)
 	arena.Esp32.SetBlueAllianceStationEstopAddress(settings.BlueAllianceStationEstopAddress)
+	arena.Esp32.SetRedAllianceHubAddress(settings.RedAllianceHubAddress)
+	arena.Esp32.SetBlueAllianceHubAddress(settings.BlueAllianceHubAddress)
 	arena.TbaClient = partner.NewTbaClient(settings.TbaEventCode, settings.TbaSecretId, settings.TbaSecret)
 	arena.NexusClient = partner.NewNexusClient(settings.TbaEventCode, settings.NexusAutoQueueKey)
 	arena.BlackmagicClient = partner.NewBlackmagicClient(settings.BlackmagicAddresses)

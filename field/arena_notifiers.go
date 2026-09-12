@@ -113,9 +113,22 @@ func (arena *Arena) generateArenaStatusMessage() any {
 		ScoreTableIOEnabled   bool
 		RedEstopsEnabled      bool
 		BlueEstopsEnabled     bool
+		RedHubEnabled         bool
+		BlueHubEnabled        bool
 		ScoreTableIOIsHealthy bool
 		RedEstopsIsHealthy    bool
 		BlueEStopsIsHealthy   bool
+		RedHubIsHealthy       bool
+		BlueHubIsHealthy      bool
+		ScoreTableIOIsActive  bool
+		RedEstopsIsActive     bool
+		BlueEstopsIsActive    bool
+		RedHubIsActive        bool
+		BlueHubIsActive       bool
+		RedHubBatteryVoltage  float64
+		RedHubBatteryPercent  float64
+		BlueHubBatteryVoltage float64
+		BlueHubBatteryPercent float64
 	}{
 		arena.CurrentMatch.Id,
 		arena.AllianceStations,
@@ -133,9 +146,22 @@ func (arena *Arena) generateArenaStatusMessage() any {
 		arena.Esp32.IsScoreTableIOEnabled(),
 		arena.Esp32.IsRedEstopsEnabled(),
 		arena.Esp32.IsBlueEstopsEnabled(),
+		arena.Esp32.IsRedHubEnabled(),
+		arena.Esp32.IsBlueHubEnabled(),
 		arena.Esp32.IsScoreTableHealthy(),
 		arena.Esp32.IsRedEstopsHealthy(),
 		arena.Esp32.IsBlueEstopsHealthy(),
+		arena.Esp32.IsRedHubHealthy(),
+		arena.Esp32.IsBlueHubHealthy(),
+		arena.Esp32.IsScoreTableActive(),
+		arena.Esp32.IsRedEstopsActive(),
+		arena.Esp32.IsBlueEstopsActive(),
+		arena.Esp32.IsRedHubActive(),
+		arena.Esp32.IsBlueHubActive(),
+		arena.Esp32.GetRedHubBatteryVoltage(),
+		arena.Esp32.GetRedHubBatteryPercent(),
+		arena.Esp32.GetBlueHubBatteryVoltage(),
+		arena.Esp32.GetBlueHubBatteryPercent(),
 	}
 }
 

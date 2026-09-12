@@ -12,6 +12,8 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 	"io"
 	"github.com/Team254/cheesy-arena/field"
 	"github.com/Team254/cheesy-arena/websocket"
@@ -112,6 +114,9 @@ func (web *Web) fieldStackLightGetHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Track that the score table module is calling.
+	web.arena.Esp32.UpdateScoreTableLastSeen()
+
 	// Get the current state of the field stack light.
 	var stackLight fieldStackLight
 	stackLight.Red, stackLight.Blue, stackLight.Orange, stackLight.Green = web.arena.Plc.GetFieldStackLight()
@@ -148,6 +153,14 @@ func (web *Web) teamStackLightGetHandler(w http.ResponseWriter, r *http.Request)
 	if r.Method != http.MethodGet {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
+	}
+
+	// Track which estops module is calling via the alliance query parameter.
+	switch strings.ToLower(r.URL.Query().Get("alliance")) {
+	case "red", "r":
+		web.arena.Esp32.UpdateRedEstopsLastSeen()
+	case "blue", "b":
+		web.arena.Esp32.UpdateBlueEstopsLastSeen()
 	}
 
 	var stackLights allStackLights
@@ -228,6 +241,92 @@ func (web *Web) teamStackLightGetHandler(w http.ResponseWriter, r *http.Request)
 	// Send the response.
 	w.Write(response)
 }
+type hubStates struct {
+	Red  field.HubDeviceLightState `json:"red"`
+	Blue field.HubDeviceLightState `json:"blue"`
+}
+
+// GET /api/freezy/hub_status?alliance={red|blue}
+// Provides a single API for a Hub module to retrieve its light state:
+//   Alliance color, solid:    Hub active
+//   Alliance color, blinking: Hub deactivation warning
+//   Purple:                   Field is safe for staff
+//   Green:                    Field is safe for all
+//   Black:                    Off
+func (web *Web) teamHubStateGetHandler(w http.ResponseWriter, r *http.Request) {
+	// Ensure the request is a GET request.
+	if r.Method != http.MethodGet {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Track which hub module is calling via the alliance query parameter.
+	switch strings.ToLower(r.URL.Query().Get("alliance")) {
+	case "red", "r":
+		web.arena.Esp32.UpdateRedHubLastSeen()
+	case "blue", "b":
+		web.arena.Esp32.UpdateBlueHubLastSeen()
+	}
+
+	var hubStates hubStates
+	hubStates.Red, hubStates.Blue = web.arena.GetHubDeviceLightStates(time.Now())
+
+	// Marshal the response payload.
+	response, err := json.Marshal(hubStates)
+	if err != nil {
+		http.Error(w, "Failed to marshal hub state", http.StatusInternalServerError)
+		return
+	}
+
+	// Send the response.
+	w.Write(response)
+}
+
+// HubStatusPayload represents the structure of the incoming POST data for hub status.
+type HubStatusPayload struct {
+	Voltage float64 `json:"voltage"`
+	Percent float64 `json:"percent"`
+}
+
+// POST /api/freezy/hub_status?alliance={red|blue}
+// Updates the battery status for a Hub module.
+func (web *Web) teamHubStatusPostHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Determine which hub is reporting via the alliance query parameter.
+	alliance := strings.ToLower(r.URL.Query().Get("alliance"))
+	if alliance != "red" && alliance != "r" && alliance != "blue" && alliance != "b" {
+		http.Error(w, "Missing or invalid alliance query parameter; must be 'red' or 'blue'", http.StatusBadRequest)
+		return
+	}
+
+	// Parse the request body.
+	var payload HubStatusPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	// Update the battery status and last seen timestamp for the appropriate hub.
+	switch alliance {
+	case "red", "r":
+		web.arena.Esp32.SetRedHubBattery(payload.Voltage, payload.Percent)
+		web.arena.Esp32.UpdateRedHubLastSeen()
+	case "blue", "b":
+		web.arena.Esp32.SetBlueHubBattery(payload.Voltage, payload.Percent)
+		web.arena.Esp32.UpdateBlueHubLastSeen()
+	}
+
+	// Notify arena status subscribers of the update.
+	web.arena.ArenaStatusNotifier.Notify()
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Hub status updated successfully."))
+}
+
 func (web *Web) setPLCRegister(w http.ResponseWriter, r *http.Request) {
 	// Ensure the request is a POST request.
 	if r.Method != http.MethodPost {
