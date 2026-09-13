@@ -85,6 +85,9 @@ type Arena struct {
 	EventStatus                       EventStatus
 	FieldVolunteers                   bool
 	FieldReset                        bool
+	// Freezy Arena: true when the green field stack light is blinking. Alternate IO devices blink locally from this
+	// instead of sampling the blinking coil, which aliases against their poll rate.
+	GreenStackLightBlink              bool
 	AudienceDisplayMode               string
 	SavedMatch                        *model.Match
 	SavedMatchResult                  *model.MatchResult
@@ -229,6 +232,8 @@ func (arena *Arena) LoadSettings() error {
 	arena.Esp32.SetScoreTableAddress(settings.ScoreTableEstopAddress)
 	arena.Esp32.SetRedAllianceStationEstopAddress(settings.RedAllianceStationEstopAddress)
 	arena.Esp32.SetBlueAllianceStationEstopAddress(settings.BlueAllianceStationEstopAddress)
+	arena.Esp32.SetRedAllianceHubAddress(settings.RedAllianceHubAddress)
+	arena.Esp32.SetBlueAllianceHubAddress(settings.BlueAllianceHubAddress)
 	arena.TbaClient = partner.NewTbaClient(settings.TbaEventCode, settings.TbaSecretId, settings.TbaSecret)
 	arena.NexusClient = partner.NewNexusClient(settings.TbaEventCode, settings.NexusAutoQueueKey)
 	arena.BlackmagicClient = partner.NewBlackmagicClient(settings.BlackmagicAddresses)
@@ -1340,7 +1345,8 @@ func (arena *Arena) handlePlcInputOutput() {
 	case PostTimeout:
 		// Set the stack light state -- solid alliance color(s) if robots are not connected, solid orange if scores are
 		// not input, or blinking green if ready.
-		greenStackLight := redAllianceReady && blueAllianceReady && arena.Plc.GetCycleState(2, 0, 2)
+		arena.GreenStackLightBlink = redAllianceReady && blueAllianceReady
+		greenStackLight := arena.GreenStackLightBlink && arena.Plc.GetCycleState(2, 0, 2)
 		arena.Plc.SetStackLights(!redAllianceReady, !blueAllianceReady, false, greenStackLight)
 		arena.Plc.SetStackBuzzer(redAllianceReady && blueAllianceReady)
 
@@ -1360,9 +1366,11 @@ func (arena *Arena) handlePlcInputOutput() {
 		}
 		scoreReady := arena.RedRealtimeScore.FoulsCommitted && arena.BlueRealtimeScore.FoulsCommitted &&
 			arena.positionPostMatchScoreReady("red") && arena.positionPostMatchScoreReady("blue")
+		arena.GreenStackLightBlink = false
 		arena.Plc.SetStackLights(false, false, !scoreReady, false)
 	case AutoPeriod, PausePeriod, TeleopPeriod:
 		arena.Plc.SetStackBuzzer(false)
+		arena.GreenStackLightBlink = false
 		arena.Plc.SetStackLights(!redAllianceReady, !blueAllianceReady, false, true)
 	}
 
