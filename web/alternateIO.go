@@ -120,6 +120,7 @@ type fieldStackLight struct {
 	Blue   bool `json:"blueStackLight"`
 	Orange bool `json:"orangeStackLight"`
 	Green  bool `json:"greenStackLight"`
+	GreenBlink bool `json:"greenStackLightBlink"`
 }
 
 func (web *Web) fieldStackLightGetHandler(w http.ResponseWriter, r *http.Request) {
@@ -135,6 +136,13 @@ func (web *Web) fieldStackLightGetHandler(w http.ResponseWriter, r *http.Request
 	// Get the current state of the field stack light.
 	var stackLight fieldStackLight
 	stackLight.Red, stackLight.Blue, stackLight.Orange, stackLight.Green = web.arena.Plc.GetFieldStackLight()
+
+	// The green coil is toggled by the PLC loop to blink it; report the steady state plus a blink flag instead so that
+	// devices polling this endpoint blink on their own clock rather than sampling the toggling coil.
+	stackLight.GreenBlink = web.arena.GreenStackLightBlink
+	if stackLight.GreenBlink {
+		stackLight.Green = true
+	}
 
 	// Marshal the response payload.
 	response, err := json.Marshal(stackLight)

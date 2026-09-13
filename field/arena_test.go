@@ -1038,6 +1038,7 @@ func TestPlcMatchCycleEvergreen(t *testing.T) {
 	arena.Update()
 	assert.Equal(t, [4]bool{false, true, false, false}, plc.stackLights)
 	assert.Equal(t, false, plc.stackLightBuzzer)
+	assert.Equal(t, false, arena.GreenStackLightBlink)
 
 	// All teams are ready.
 	arena.AllianceStations["B3"].Bypass = true
@@ -1045,11 +1046,14 @@ func TestPlcMatchCycleEvergreen(t *testing.T) {
 	arena.Update()
 	assert.Equal(t, [4]bool{false, false, false, true}, plc.stackLights)
 	assert.Equal(t, true, plc.stackLightBuzzer)
+	assert.Equal(t, true, arena.GreenStackLightBlink)
 
 	// Green light when blink cycle is off.
 	plc.cycleState = false
 	arena.Update()
 	assert.Equal(t, [4]bool{false, false, false, false}, plc.stackLights)
+	// The blink flag stays steady across the coil's blink cycle so that alternate IO devices don't sample it.
+	assert.Equal(t, true, arena.GreenStackLightBlink)
 
 	// Start the match.
 	assert.Nil(t, arena.StartMatch())
@@ -1057,6 +1061,7 @@ func TestPlcMatchCycleEvergreen(t *testing.T) {
 	assert.Equal(t, AutoPeriod, arena.MatchState)
 	assert.Equal(t, [4]bool{false, false, false, true}, plc.stackLights)
 	assert.Equal(t, false, plc.stackLightBuzzer)
+	assert.Equal(t, false, arena.GreenStackLightBlink)
 
 	// End the match.
 	arena.MatchStartTime = time.Now().Add(
@@ -1070,6 +1075,7 @@ func TestPlcMatchCycleEvergreen(t *testing.T) {
 	assert.Equal(t, PostMatch, arena.MatchState)
 	assert.Equal(t, [4]bool{false, false, true, false}, plc.stackLights)
 	assert.Equal(t, false, plc.fieldResetLight)
+	assert.Equal(t, false, arena.GreenStackLightBlink)
 
 	// Ready the score.
 	arena.RedRealtimeScore.FoulsCommitted = true
