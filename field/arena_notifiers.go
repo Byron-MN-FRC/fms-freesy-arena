@@ -140,7 +140,7 @@ func (arena *Arena) generateArenaStatusMessage() any {
 		arena.redSCC.Status,
 		arena.blueSCC.Status,
 		arena.Plc.IsHealthy(),
-		arena.Plc.GetFieldEStop(),
+		arena.FieldEStop,
 		arena.Plc.IsFtaReady(),
 		arena.Plc.GetArmorBlockStatuses(),
 		arena.Esp32.IsScoreTableIOEnabled(),

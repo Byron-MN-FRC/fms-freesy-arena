@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/Team254/cheesy-arena/game"
 
@@ -21,6 +22,12 @@ import (
 )
 
 const (
+	// The field devices open a fresh connection for each request several times a second and do not reuse them. The
+	// default server has no timeouts at all, so an abandoned connection is held open forever, tying up a socket on
+	// both ends. Idle connections are only ever waste here; browsers reconnect transparently.
+	httpIdleTimeoutSec       = 10
+	httpReadHeaderTimeoutSec = 10
+
 	sessionTokenCookie = "session_token"
 	adminUser          = "admin"
 )
@@ -87,14 +94,31 @@ func NewWeb(arena *field.Arena) *Web {
 	return web
 }
 
+// Wraps a handler for the field devices so the connection is closed once the response is sent. They are embedded
+// HTTP clients that open a fresh socket for every request, several times a second; if a device does not close its
+// end, the server's keep-alive holds the socket open and the device's small pool fills until a request blocks waiting
+// for one to free. Closing here returns the socket to the device immediately.
+func closeAfterResponse(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Connection", "close")
+		handler(w, r)
+	}
+}
+
 // Starts the webserver and blocks, waiting on requests. Does not return until the application exits.
 func (web *Web) ServeWebInterface(port int) {
 	http.Handle("/static/", http.StripPrefix("/static/", addNoCacheHeader(http.FileServer(http.Dir("static/")))))
 	http.Handle("/", web.newHandler())
 	log.Printf("Serving HTTP requests on port %d", port)
 
-	// Start Server
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil); err != nil {
+	// Start Server. Only the idle and header timeouts are set: a read or write timeout would also apply to the
+	// websocket endpoints, which stay open for the life of a display.
+	server := &http.Server{
+		Addr:              fmt.Sprintf(":%d", port),
+		IdleTimeout:       httpIdleTimeoutSec * time.Second,
+		ReadHeaderTimeout: httpReadHeaderTimeoutSec * time.Second,
+	}
+	if err := server.ListenAndServe(); err != nil {
 		log.Printf("HTTP server error: %v", err)
 	}
 }
@@ -244,23 +268,23 @@ func (web *Web) newHandler() http.Handler {
 	mux.HandleFunc("GET /help/freezy/configuring_advanced_networking_help", web.configuringAdvancedNetworkingHandler)
 	mux.HandleFunc("GET /help/freezy/alliance_station_display_help", web.allianceStationDisplayHelpHandler)
 	mux.HandleFunc("GET /help/freezy/running_the_event_help", web.runningTheEventHelpHandler)
-	mux.HandleFunc("POST /api/freezy/eStopState", web.eStopStatePostHandler)
+	mux.HandleFunc("POST /api/freezy/eStopState", closeAfterResponse(web.eStopStatePostHandler))
 	mux.HandleFunc("GET /api/freezy/allianceStatus", web.allianceStatusApiHandler)
 	mux.HandleFunc("GET /panel/freezy/eStopControl/{alliance}", web.estopContolDisplayHandler)
 	mux.HandleFunc("GET /panel/freezy/eStopControl/websocket", web.estopContolDisplayWebsocketHandler)
 	mux.HandleFunc("GET /panel/freezy/eStopControl/{alliance}/websocket", web.scoringPanelWebsocketHandler)
-	mux.HandleFunc("GET /api/freezy/alternateIO/PLC_Coils", web.getAllPlcCoilsGetHandler)
-	mux.HandleFunc("POST /api/freezy/startMatch", web.startMatchPostHandler)
+	mux.HandleFunc("GET /api/freezy/alternateIO/PLC_Coils", closeAfterResponse(web.getAllPlcCoilsGetHandler))
+	mux.HandleFunc("POST /api/freezy/startMatch", closeAfterResponse(web.startMatchPostHandler))
 	mux.HandleFunc("POST /panel/freezy/add_practice_match", web.addPracticeMatchPostHandler)
 	mux.HandleFunc("GET /panel/freezy/add_practice_match", web.addPracticeMatchGetHandler)
 	mux.HandleFunc("POST /panel/freezy/edit_practice_match", web.editPracticeMatchHandler)
-	mux.HandleFunc("GET /api/freezy/field_stack_light", web.fieldStackLightGetHandler)
-	mux.HandleFunc("GET /api/freezy/team_stack_light", web.teamStackLightGetHandler)
-	mux.HandleFunc("GET /api/freezy/hub_status", web.teamHubStateGetHandler)
-	mux.HandleFunc("POST /api/freezy/hub_status", web.teamHubStatusPostHandler)
+	mux.HandleFunc("GET /api/freezy/field_stack_light", closeAfterResponse(web.fieldStackLightGetHandler))
+	mux.HandleFunc("GET /api/freezy/team_stack_light", closeAfterResponse(web.teamStackLightGetHandler))
+	mux.HandleFunc("GET /api/freezy/hub_status", closeAfterResponse(web.teamHubStateGetHandler))
+	mux.HandleFunc("POST /api/freezy/hub_status", closeAfterResponse(web.teamHubStatusPostHandler))
 	mux.HandleFunc("POST /freezy/upload/image", web.uploadImagePostHandler)
 	mux.HandleFunc("GET /freezy/upload", web.uploadImagePageHandler)
-	mux.HandleFunc("POST /api/freezy/register_values", web.setPLCRegister)
+	mux.HandleFunc("POST /api/freezy/register_values", closeAfterResponse(web.setPLCRegister))
 	mux.HandleFunc("GET /api/plc/websocket", web.plcWebsocketHandler)
     
 	return mux

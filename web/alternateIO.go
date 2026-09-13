@@ -19,6 +19,10 @@ import (
 	"github.com/Team254/cheesy-arena/websocket"
 )
 
+// Channel 0 of the stop-state payload, matching fieldEStop in the PLC input enum. It belongs to the score table
+// module alone; the alliance modules own channels 1-6 (red) and 7-12 (blue).
+const fieldEStopChannel = 0
+
 // RequestPayload represents the structure of the incoming POST data.
 type RequestPayload struct {
 	Channel int  `json:"channel"`
@@ -45,6 +49,17 @@ func (web *Web) eStopStatePostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, item := range payload {
+		if item.Channel == fieldEStopChannel {
+			// Several devices share this channel, each reporting only its own button, so combine them rather than
+			// letting the last one to poll win. The inputs are active-low, so a false state means pressed.
+			pressed := !item.State
+			anyPressed, changed := web.arena.Esp32.SetFieldEStopPressed(r.RemoteAddr, pressed)
+			if changed {
+				web.logFieldEStopChange(r.RemoteAddr, pressed)
+			}
+			web.arena.Plc.SetAlternateIOStopState(item.Channel, !anyPressed)
+			continue
+		}
     	web.arena.Plc.SetAlternateIOStopState(item.Channel, item.State)
 	}
 
@@ -55,6 +70,19 @@ func (web *Web) eStopStatePostHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("eStop state updated successfully."))
 
+}
+
+// Logs which field e-stop button changed state, since every one of them shares a single channel.
+func (web *Web) logFieldEStopChange(remoteAddr string, pressed bool) {
+	source := web.arena.Esp32.ModuleNameForAddress(remoteAddr)
+	if source == "" {
+		source = "device at " + remoteAddr
+	}
+	action := "released"
+	if pressed {
+		action = "pressed"
+	}
+	log.Printf("Field e-stop %s at the %s.", action, source)
 }
 
 // Marks whichever ESP32 module is configured at the request's source IP as active. Handlers whose payloads

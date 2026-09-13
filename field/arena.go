@@ -110,6 +110,8 @@ type Arena struct {
 	NextFoulId                        int
 	DriverStationUdpSocket            *net.UDPConn
 	redWonAuto                        bool
+	FieldEStop                        bool
+	lastFieldEStop                    bool
 	Esp32                             plc.Esp32
 	lastPlcNotifyTime                 time.Time
 	lastRedLedMode                    led.Mode
@@ -134,6 +136,9 @@ func NewArena(dbPath string) (*Arena, error) {
 	arena := new(Arena)
 	arena.configureNotifiers()
 	arena.Plc = new(plc.ModbusPlc)
+	// The stop inputs are active-low, so the zero-valued input array reads as every stop pressed. Seed them to the
+	// released state; without a PLC polling them, nothing else writes them until a device posts its first update.
+	arena.Plc.ResetEstops()
 	arena.Esp32 = new(plc.Esp32IO)
 	arena.Esp32.SetPlc(arena.Plc)
 	arena.AllianceStations = make(map[string]*AllianceStation)
@@ -417,6 +422,7 @@ func (arena *Arena) LoadMatch(match *model.Match) error {
 	arena.Plc.SetFtaReady(false)
 	arena.NextFoulId = 1
 	arena.redWonAuto = false
+	arena.FieldEStop = false
 	arena.Leds.SetMode(led.OffMode, led.OffMode)
 	currentRed, currentBlue := arena.Leds.GetModes()
 	if currentRed != arena.lastRedLedMode || currentBlue != arena.lastBlueLedMode {
@@ -601,6 +607,7 @@ func (arena *Arena) ResetMatch() error {
 	}
 	arena.closeTeamMatchLogs()
 	arena.matchAborted = false
+	arena.FieldEStop = false
 	arena.AllianceStations["R1"].Bypass = false
 	arena.AllianceStations["R2"].Bypass = false
 	arena.AllianceStations["R3"].Bypass = false
@@ -1310,9 +1317,29 @@ func (arena *Arena) handlePlcInputOutput() {
 		return
 	}
 
-	// Handle PLC functions that are always active.
-	if arena.Plc.GetFieldEStop() && !arena.matchAborted {
-		arena.AbortMatch()
+	// Handle PLC functions that are always active. The field e-stop stops every alliance station and latches until
+	// the match is over, the same as a team e-stop; unlike a team e-stop, bypassing a driver station does not clear
+	// it. Latching here rather than reading the input directly keeps the status shown to the operator in step with
+	// the stations it stopped.
+	if arena.Plc.GetFieldEStop() {
+		arena.FieldEStop = true
+	} else if arena.MatchTimeSec() == 0 {
+		// Keep the field e-stop latched until the match is over.
+		arena.FieldEStop = false
+	}
+	if arena.FieldEStop {
+		for _, allianceStation := range arena.AllianceStations {
+			allianceStation.EStop = true
+		}
+		if !arena.matchAborted {
+			arena.AbortMatch()
+		}
+	}
+	if arena.FieldEStop != arena.lastFieldEStop {
+		// Arena status is otherwise only published on the driver station packet cadence, which would hold a field
+		// e-stop off the operator's screen for up to half a second after the button was pressed.
+		arena.lastFieldEStop = arena.FieldEStop
+		arena.ArenaStatusNotifier.Notify()
 	}
 	redEthernets, blueEthernets := arena.Plc.GetEthernetConnected()
 	arena.AllianceStations["R1"].Ethernet = redEthernets[0]

@@ -132,7 +132,7 @@ UI for controlling match play and viewing team connection and field status.
             <span class="badge badge-alternatIO" id="blueEstopsIO"></span>
             <span class="badge badge-alternatIO" id="redHubIO"></span>
             <span class="badge badge-alternatIO" id="blueHubIO"></span>
-            <span class="badge badge-scoring" id="fieldEStop">Field E-Stop</span><br />
+            {{if not .PlcIsEnabled}}<span class="badge badge-scoring" id="fieldEStop">Field E-Stop</span><br />{{end}}
           </p>
         {{end}}
         </div>

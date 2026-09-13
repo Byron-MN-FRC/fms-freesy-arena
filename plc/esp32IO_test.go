@@ -5,15 +5,19 @@ package plc
 import (
 	"github.com/stretchr/testify/assert"
 	"testing"
+	"time"
 )
 
 func TestEsp32IOUpdateLastSeenFromAddress(t *testing.T) {
-	esp32 := new(Esp32IO)
-	esp32.SetScoreTableAddress("10.0.100.20")
-	esp32.SetRedAllianceStationEstopAddress("10.0.100.21")
-	esp32.SetBlueAllianceStationEstopAddress("10.0.100.22")
-	esp32.SetRedAllianceHubAddress("10.0.100.23")
-	esp32.SetBlueAllianceHubAddress("10.0.100.24")
+	newEsp32 := func() *Esp32IO {
+		esp32 := new(Esp32IO)
+		esp32.SetScoreTableAddress("10.0.100.20")
+		esp32.SetRedAllianceStationEstopAddress("10.0.100.21")
+		esp32.SetBlueAllianceStationEstopAddress("10.0.100.22")
+		esp32.SetRedAllianceHubAddress("10.0.100.23")
+		esp32.SetBlueAllianceHubAddress("10.0.100.24")
+		return esp32
+	}
 
 	testCases := []struct {
 		name       string
@@ -32,7 +36,7 @@ func TestEsp32IOUpdateLastSeenFromAddress(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			esp32 := *esp32 // Fresh timestamps for each case.
+			esp32 := newEsp32() // Fresh timestamps for each case.
 			assert.Equal(t, tc.matched, esp32.UpdateLastSeenFromAddress(tc.remoteAddr))
 			assert.Equal(t, tc.active[0], esp32.IsScoreTableActive(), "score table")
 			assert.Equal(t, tc.active[1], esp32.IsRedEstopsActive(), "red estops")
@@ -50,4 +54,29 @@ func TestEsp32IOUpdateLastSeenFromAddressIgnoresUnconfiguredModules(t *testing.T
 	assert.False(t, esp32.IsScoreTableActive())
 	assert.False(t, esp32.IsRedEstopsActive())
 	assert.False(t, esp32.IsBlueEstopsActive())
+}
+
+// A device that is calling the API is known to be up, so it must not be TCP-probed: the probe can stall a
+// single-connection web server for seconds, delaying the very reports it is making.
+func TestEsp32IOUpdateDeviceHealthSkipsProbeWhileActive(t *testing.T) {
+	esp32 := new(Esp32IO)
+	healthy := false
+
+	// An address nothing is listening on, so any probe fails.
+	const deadAddress = "192.0.2.1"
+
+	// Active: healthy without probing, and fast, because a probe would block for the dial timeout.
+	startTime := time.Now()
+	esp32.updateDeviceHealth("Test", deadAddress, &healthy, func() bool { return true })
+	assert.True(t, healthy)
+	assert.Less(t, time.Since(startTime), time.Second)
+
+	// Quiet: falls back to probing, which fails for this address.
+	esp32.updateDeviceHealth("Test", deadAddress, &healthy, func() bool { return false })
+	assert.False(t, healthy)
+
+	// Unconfigured is never healthy, even while active.
+	healthy = true
+	esp32.updateDeviceHealth("Test", "", &healthy, func() bool { return true })
+	assert.False(t, healthy)
 }

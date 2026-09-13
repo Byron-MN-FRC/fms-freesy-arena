@@ -194,3 +194,80 @@ func newTestEsp32WithEstops() *plc.Esp32IO {
 	esp32.SetBlueAllianceStationEstopAddress("10.0.100.22")
 	return esp32
 }
+
+func (web *Web) postJsonHttpResponseFrom(path, remoteAddr, body string) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = remoteAddr
+	web.newHandler().ServeHTTP(recorder, req)
+	return recorder
+}
+
+// The score table and each alliance station have their own field e-stop button, all sharing channel 0 and each
+// reporting only its own contact. One device reporting "not pressed" must never clear another device's press.
+func TestEStopStateFieldEStopIsWiredOr(t *testing.T) {
+	web := setupTestWeb(t)
+	web.arena.Esp32.SetScoreTableAddress("10.0.100.26")
+	web.arena.Esp32.SetBlueAllianceStationEstopAddress("10.0.100.23")
+
+	const scoreTable, blue = "10.0.100.26:55821", "10.0.100.23:61066"
+	press := func(remoteAddr string, pressed bool) {
+		body := `[{"channel":0,"state":true}]`
+		if pressed {
+			body = `[{"channel":0,"state":false}]`
+		}
+		assert.Equal(t, 200, web.postJsonHttpResponseFrom("/api/freezy/eStopState", remoteAddr, body).Code)
+	}
+
+	// Blue polling "not pressed" several times over does not clear the score table's press.
+	press(blue, false)
+	press(scoreTable, true)
+	assert.True(t, web.arena.Plc.GetFieldEStop())
+	press(blue, false)
+	press(blue, false)
+	assert.True(t, web.arena.Plc.GetFieldEStop())
+
+	// It clears only once the score table itself reports released.
+	press(scoreTable, false)
+	assert.False(t, web.arena.Plc.GetFieldEStop())
+
+	// Either button stops the field on its own.
+	press(blue, true)
+	assert.True(t, web.arena.Plc.GetFieldEStop())
+	press(scoreTable, false)
+	assert.True(t, web.arena.Plc.GetFieldEStop())
+
+	// Both must be released before the field is clear.
+	press(scoreTable, true)
+	assert.True(t, web.arena.Plc.GetFieldEStop())
+	press(blue, false)
+	assert.True(t, web.arena.Plc.GetFieldEStop())
+	press(scoreTable, false)
+	assert.False(t, web.arena.Plc.GetFieldEStop())
+
+	// The other stop channels are untouched by any of this; blue1EStop is channel 7.
+	assert.Equal(t, 200, web.postJsonHttpResponseFrom(
+		"/api/freezy/eStopState", blue, `[{"channel":7,"state":false}]`).Code)
+	_, blueEStops := web.arena.Plc.GetTeamEStops()
+	assert.True(t, blueEStops[0])
+	assert.False(t, web.arena.Plc.GetFieldEStop())
+}
+
+// The field devices open a socket per request; the server closes it after responding so their pools do not fill.
+func TestDeviceApiClosesConnection(t *testing.T) {
+	web := setupTestWeb(t)
+	for _, path := range []string{
+		"/api/freezy/field_stack_light",
+		"/api/freezy/team_stack_light",
+		"/api/freezy/hub_status",
+		"/api/freezy/alternateIO/PLC_Coils",
+	} {
+		recorder := web.getHttpResponse(path)
+		assert.Equal(t, 200, recorder.Code, path)
+		assert.Equal(t, "close", recorder.Header().Get("Connection"), path)
+	}
+	recorder := web.postJsonHttpResponseFrom("/api/freezy/eStopState", "10.0.100.26:1", `[{"channel":0,"state":true}]`)
+	assert.Equal(t, 200, recorder.Code)
+	assert.Equal(t, "close", recorder.Header().Get("Connection"))
+}

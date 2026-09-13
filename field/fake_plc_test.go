@@ -146,20 +146,11 @@ func (plc *FakePlc) SetAlternateIOStopState(input int, state bool) {
 
 // used for Alternate IO stops
 func (plc *FakePlc) ResetEstops() {
-	plc.fieldEStop = true
-	plc.redEStops[0] = true
-	plc.redEStops[1] = true
-	plc.redEStops[2] = true
-	plc.blueEStops[0] = true
-	plc.blueEStops[1] = true
-	plc.blueEStops[2] = true
-	plc.redAStops[0] = true
-	plc.redAStops[1] = true
-	plc.redAStops[2] = true
-	plc.blueAStops[0] = true
-	plc.blueAStops[1] = true
-	plc.blueAStops[2] = true
-
+	plc.fieldEStop = false
+	plc.redEStops = [3]bool{}
+	plc.blueEStops = [3]bool{}
+	plc.redAStops = [3]bool{}
+	plc.blueAStops = [3]bool{}
 }
 
 // Returns the value of all PLC coils.

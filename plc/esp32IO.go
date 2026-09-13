@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -39,6 +40,8 @@ type Esp32 interface {
 	UpdateRedHubLastSeen()
 	UpdateBlueHubLastSeen()
 	UpdateLastSeenFromAddress(string) bool
+	ModuleNameForAddress(string) string
+	SetFieldEStopPressed(string, bool) (bool, bool)
 	SetScoreTableAddress(string) 
 	SetRedAllianceStationEstopAddress(string) 
 	SetBlueAllianceStationEstopAddress(string) 
@@ -75,9 +78,17 @@ type Esp32IO struct {
 	RedHubBatteryPercent	float64
 	BlueHubBatteryVoltage	float64
 	BlueHubBatteryPercent	float64
+	// Field e-stop state most recently reported by each device that has a field e-stop button, keyed by host.
+	fieldEStopPressed	map[string]bool
+	fieldEStopMutex		sync.Mutex
 	Plc Plc
 }
 const LoopPeriodMs = 1000 // Define the loop period in milliseconds
+
+// How long to wait for a device to answer a probe. A configured device that is not plugged in never answers, so this
+// is how long each probe of an absent device blocks the loop.
+const deviceProbeTimeoutSec = 1
+
 
 
 // RequestPayload represents the structure of the incoming POST data.
@@ -159,7 +170,7 @@ func (esp32 *Esp32IO) SetPlc(plc Plc) {
 // Checks if an IP address is reachable by attempting a TCP connection.
 func isDevicePresent(ip string, port string) error {
     address := net.JoinHostPort(ip, port)
-    conn, err := net.DialTimeout("tcp", address, time.Second*2)
+    conn, err := net.DialTimeout("tcp", address, time.Second*deviceProbeTimeoutSec)
     if err != nil {
         //log.Printf("Device not reachable at %s: %v", address, err)
         return err
@@ -171,105 +182,57 @@ func isDevicePresent(ip string, port string) error {
 // Run starts the ESP32 IO monitoring loop.
 func (esp32 *Esp32IO) Run() {
 	for {
-		// Check if the Score Table Estops are reachable.
-		if !esp32.IsScoreTableIOEnabled() {
-			// If the Score Table is not enabled, don't check it.
-			esp32.scoreTableHealthy = false
-		} else {
-			//log.Println("ScoreTable Check")
-			err := isDevicePresent(esp32.ScoreTableIP, "80")
-			if err != nil {
-				log.Printf("Score Table not reachable at %s: %v", esp32.ScoreTableIP, err)
-				time.Sleep(time.Second * plcRetryIntevalSec)
-				esp32.scoreTableHealthy = false
-				continue
-				}else{
-					if (!esp32.scoreTableHealthy){
-						log.Printf("Score Table Connected at: %s", esp32.ScoreTableIP)
-					}
-					esp32.scoreTableHealthy = true
-				}
-			}
-			// Check if the Red Alliance Estops are healthy.
-			if !esp32.IsRedEstopsEnabled() {
-				// If the Red Alliance Estops are not enabled, don't check them.
-				esp32.RedEstopsHealthy= false
-				} else {
-			//log.Println("Red Estops IO Check")
-			err := isDevicePresent(esp32.RedAllianceEstopsIP, "80")
-			if err != nil {
-				log.Printf("Red Alliance Estops not reachable at %s: %v", esp32.RedAllianceEstopsIP, err)
-				time.Sleep(time.Second * plcRetryIntevalSec)
-				esp32.RedEstopsHealthy = false
-				continue
-				}else{
-					if (!esp32.RedEstopsHealthy){
-						log.Printf("Red Estops Connected at: %s ", esp32.RedAllianceEstopsIP)
-					}
-					esp32.RedEstopsHealthy = true
-				}
-			}
-			// Check if the Blue Alliance Estops are healthy.
-			if !esp32.IsBlueEstopsEnabled() {
-				// If the Blue Alliance Estops are not enabled, don't check them.
-				esp32.BlueEstopsHealthy = false
-				} else {
-			//log.Println("Blue Estops IO Check")
-			err := isDevicePresent(esp32.BlueAllianceEstopsIP, "80")
-			if err != nil {
-				log.Printf("Blue Alliance Estops not reachable at %s: %v", esp32.BlueAllianceEstopsIP, err)
-				time.Sleep(time.Second * plcRetryIntevalSec)
-				esp32.BlueEstopsHealthy = false
-				continue
-			}else{
-				if (!esp32.BlueEstopsHealthy){
-					log.Printf("Blue Estops Connected at: %s ", esp32.BlueAllianceEstopsIP)
-				}
-				esp32.BlueEstopsHealthy = true
-			}
+		for _, device := range []struct {
+			name    string
+			address string
+			healthy *bool
+			active  func() bool
+		}{
+			{"Score Table", esp32.ScoreTableIP, &esp32.scoreTableHealthy, esp32.IsScoreTableActive},
+			{"Red Estops", esp32.RedAllianceEstopsIP, &esp32.RedEstopsHealthy, esp32.IsRedEstopsActive},
+			{"Blue Estops", esp32.BlueAllianceEstopsIP, &esp32.BlueEstopsHealthy, esp32.IsBlueEstopsActive},
+			{"Red Hub", esp32.RedAllianceHubIP, &esp32.RedHubHealthy, esp32.IsRedHubActive},
+			{"Blue Hub", esp32.BlueAllianceHubIP, &esp32.BlueHubHealthy, esp32.IsBlueHubActive},
+		} {
+			esp32.updateDeviceHealth(device.name, device.address, device.healthy, device.active)
 		}
-			// Check if the Red Alliance Hub is healthy.
-			if !esp32.IsRedHubEnabled() {
-				// If the Red Alliance Hub is not enabled, don't check it.
-				esp32.RedHubHealthy = false
-				} else {
-			//log.Println("Red Hub IO Check")
-			err := isDevicePresent(esp32.RedAllianceHubIP, "80")
-			if err != nil {
-				log.Printf("Red Alliance Hub not reachable at %s: %v", esp32.RedAllianceHubIP, err)
-				time.Sleep(time.Second * plcRetryIntevalSec)
-				esp32.RedHubHealthy = false
-				continue
-				}else{
-					if (!esp32.RedHubHealthy){
-						log.Printf("Red Hub Connected at: %s ", esp32.RedAllianceHubIP)
-					}
-					esp32.RedHubHealthy = true
-				}
-			}
-			// Check if the Blue Alliance Hub is healthy.
-			if !esp32.IsBlueHubEnabled() {
-				// If the Blue Alliance Hub is not enabled, don't check it.
-				esp32.BlueHubHealthy = false
-				} else {
-			//log.Println("Blue Hub IO Check")
-			err := isDevicePresent(esp32.BlueAllianceHubIP, "80")
-			if err != nil {
-				log.Printf("Blue Alliance Hub not reachable at %s: %v", esp32.BlueAllianceHubIP, err)
-				time.Sleep(time.Second * plcRetryIntevalSec)
-				esp32.BlueHubHealthy = false
-				continue
-				}else{
-					if (!esp32.BlueHubHealthy){
-						log.Printf("Blue Hub Connected at: %s ", esp32.BlueAllianceHubIP)
-					}
-					esp32.BlueHubHealthy = true
-				}
-			}
+
 		esp32.Plc.ResetMatchReset()
-		startTime := time.Now()
-		time.Sleep(time.Until(startTime.Add(time.Millisecond * LoopPeriodMs)))
+
+		// Always pause a full period between passes rather than sleeping until a fixed deadline. Probing a device
+		// that is configured but not plugged in blocks for the probe timeout, which overruns the deadline and would
+		// otherwise leave no pause at all, dialing an absent host back to back and flooding the segment with ARP
+		// traffic for it. That delays every other device on the field.
+		time.Sleep(time.Millisecond * LoopPeriodMs)
 	}
+}
+
+// Updates one device's health flag, logging only when it changes so that an absent device does not fill the log.
+//
+// A device that is calling our API is known to be up, so it is not probed. These are single-connection web servers,
+// and a bare TCP connect that never sends a request can block one until its own HTTP timeout expires, delaying the
+// button presses it is trying to report. Probing is only for devices that have gone quiet.
+func (esp32 *Esp32IO) updateDeviceHealth(name, address string, healthy *bool, isActive func() bool) {
+	if address == "" {
+		// An empty address means the device is not configured.
+		*healthy = false
+		return
+	}
+
+	if !isActive() {
+		if err := isDevicePresent(address, "80"); err != nil {
+			if *healthy {
+				log.Printf("%s not reachable at %s: %v", name, address, err)
+			}
+			*healthy = false
+			return
+		}
+	}
+
+	if !*healthy {
+		log.Printf("%s Connected at: %s", name, address)
+	}
+	*healthy = true
 }
 
 // Returns whether the alternate IO is enabled.
@@ -393,6 +356,75 @@ func (esp32 *Esp32IO) UpdateLastSeenFromAddress(remoteAddr string) bool {
 		matched = true
 	}
 	return matched
+}
+
+// Records the field e-stop state reported by the device at the given remote address, and returns whether any device
+// currently reports it pressed along with whether this report changed that device's own state.
+//
+// The field e-stop is a wired-OR. The score table and each alliance station have their own button, and every device
+// reports only its own contact, so one device reporting "not pressed" must never clear another device's press. The
+// last device to report used to win, which let any device still polling clear an operator's stop within milliseconds.
+func (esp32 *Esp32IO) SetFieldEStopPressed(remoteAddr string, pressed bool) (bool, bool) {
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = h
+	}
+
+	esp32.fieldEStopMutex.Lock()
+	defer esp32.fieldEStopMutex.Unlock()
+
+	if esp32.fieldEStopPressed == nil {
+		esp32.fieldEStopPressed = make(map[string]bool)
+	}
+	previous, seen := esp32.fieldEStopPressed[host]
+	esp32.fieldEStopPressed[host] = pressed
+
+	anyPressed := false
+	for _, devicePressed := range esp32.fieldEStopPressed {
+		if devicePressed {
+			anyPressed = true
+			break
+		}
+	}
+	return anyPressed, !seen || previous != pressed
+}
+
+// Names of the configured modules, as reported by ModuleNameForAddress.
+const (
+	ModuleScoreTable = "score table"
+	ModuleRedEstops  = "red alliance estops"
+	ModuleBlueEstops = "blue alliance estops"
+	ModuleRedHub     = "red alliance hub"
+	ModuleBlueHub    = "blue alliance hub"
+)
+
+// Returns the name of the configured module at the given remote address (an "ip:port" string as found in
+// http.Request.RemoteAddr, or a bare IP), or the empty string if no configured module is at that address.
+func (esp32 *Esp32IO) ModuleNameForAddress(remoteAddr string) string {
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = h
+	}
+	remoteIp := net.ParseIP(host)
+	if remoteIp == nil {
+		return ""
+	}
+
+	for _, module := range []struct {
+		name       string
+		configured string
+	}{
+		{ModuleScoreTable, esp32.ScoreTableIP},
+		{ModuleRedEstops, esp32.RedAllianceEstopsIP},
+		{ModuleBlueEstops, esp32.BlueAllianceEstopsIP},
+		{ModuleRedHub, esp32.RedAllianceHubIP},
+		{ModuleBlueHub, esp32.BlueAllianceHubIP},
+	} {
+		if module.configured != "" && remoteIp.Equal(net.ParseIP(module.configured)) {
+			return module.name
+		}
+	}
+	return ""
 }
 
 // Returns whether the Score Table module is actively calling the API.

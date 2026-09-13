@@ -1017,6 +1017,101 @@ func TestPlcFieldEStopWithPlcDisabled(t *testing.T) {
 	assert.Equal(t, AutoPeriod, arena.MatchState)
 }
 
+// The stop inputs are active-low, so a zero-valued input array reads as every stop pressed. With alternate I/O and
+// no PLC polling the inputs, nothing writes them until a device posts, so a fresh arena must start released.
+func TestFieldEStopNotLatchedOnStartup(t *testing.T) {
+	arena := setupTestArena(t)
+	arena.EventSettings.AlternateIOEnabled = true
+
+	arena.Update()
+	assert.False(t, arena.FieldEStop)
+	for _, station := range []string{"R1", "R2", "R3", "B1", "B2", "B3"} {
+		assert.False(t, arena.AllianceStations[station].EStop, station)
+	}
+}
+
+func TestPlcFieldEStopStopsAllStations(t *testing.T) {
+	stations := []string{"R1", "R2", "R3", "B1", "B2", "B3"}
+
+	for _, testCase := range []struct {
+		name           string
+		plcEnabled     bool
+		alternateIo    bool
+		expectEStopped bool
+	}{
+		{"plc", true, false, true},
+		{"alternateIo", false, true, true},
+		{"neither", false, false, false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			arena := setupTestArena(t)
+			var plc FakePlc
+			plc.isEnabled = testCase.plcEnabled
+			plc.ftaReady = true
+			arena.Plc = &plc
+			arena.EventSettings.AlternateIOEnabled = testCase.alternateIo
+
+			// The field e-stop stops every station, even ones that are bypassed.
+			arena.AllianceStations["R1"].Bypass = true
+			plc.fieldEStop = true
+			arena.Update()
+			for _, station := range stations {
+				assert.Equal(t, testCase.expectEStopped, arena.AllianceStations[station].EStop, station)
+			}
+			if testCase.expectEStopped {
+				assert.NotNil(t, arena.checkCanStartMatch())
+			}
+
+			// Releasing the button clears it again while no match is running.
+			plc.fieldEStop = false
+			arena.Update()
+			assert.False(t, arena.FieldEStop)
+			for _, station := range stations {
+				assert.False(t, arena.AllianceStations[station].EStop, station)
+			}
+		})
+	}
+}
+
+// A field e-stop pressed during a match aborts it and stops every station, and stays asserted until the button is
+// released, matching how a team e-stop behaves.
+func TestFieldEStopDuringMatch(t *testing.T) {
+	stations := []string{"R1", "R2", "R3", "B1", "B2", "B3"}
+	arena := setupTestArena(t)
+	var plc FakePlc
+	plc.isEnabled = true
+	plc.ftaReady = true
+	arena.Plc = &plc
+	for _, station := range stations {
+		arena.AllianceStations[station].Bypass = true
+	}
+
+	assert.Nil(t, arena.StartMatch())
+	arena.Update()
+	assert.Equal(t, AutoPeriod, arena.MatchState)
+
+	plc.fieldEStop = true
+	arena.Update()
+	assert.True(t, arena.FieldEStop)
+	assert.True(t, arena.matchAborted)
+	assert.Equal(t, PostMatch, arena.MatchState)
+
+	// Holding the button keeps every station stopped after the abort.
+	arena.Update()
+	assert.True(t, arena.FieldEStop)
+	for _, station := range stations {
+		assert.True(t, arena.AllianceStations[station].EStop, station)
+	}
+
+	// The match is over once it is aborted, so releasing the button clears it, the same as a team e-stop.
+	plc.fieldEStop = false
+	arena.Update()
+	assert.False(t, arena.FieldEStop)
+	for _, station := range stations {
+		assert.False(t, arena.AllianceStations[station].EStop, station)
+	}
+}
+
 func TestPlcMatchCycleEvergreen(t *testing.T) {
 	arena := setupTestArena(t)
 	var plc FakePlc

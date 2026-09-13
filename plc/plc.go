@@ -566,8 +566,13 @@ func (plc *ModbusPlc) SetFtaReady(state bool) {
 }
 
 // used for Alternate IO stops
-func (plc *ModbusPlc) SetAlternateIOStopState(input int, state bool) {
-	plc.inputs[input] = state
+func (plc *ModbusPlc) SetAlternateIOStopState(index int, state bool) {
+	// The channel comes straight off an HTTP request, so reject out-of-range values rather than panicking.
+	if index < 0 || index >= int(inputCount) {
+		log.Printf("Alternate IO stop state ignored: channel %d is out of range (0-%d).", index, int(inputCount)-1)
+		return
+	}
+	plc.inputs[index] = state
 }
 
 func (plc *ModbusPlc) ResetEstops() {
