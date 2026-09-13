@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,7 +38,7 @@ type SCCSwitch struct {
 
 func NewSCCSwitch(address, username, password string, upCommands, downCommands []string) *SCCSwitch {
 	return &SCCSwitch{
-		address:                address,
+		address:                strings.TrimSpace(address),
 		port:                   sccSwitchSSHPort,
 		username:               username,
 		password:               password,
@@ -49,9 +50,21 @@ func NewSCCSwitch(address, username, password string, upCommands, downCommands [
 	}
 }
 
+// Returns whether an address is configured for this switch. SCC management is a single setting covering both
+// alliances, so an alliance with no SCC switch is expressed by leaving its address blank.
+func (scc *SCCSwitch) IsEnabled() bool {
+	return scc.address != ""
+}
+
 func (scc *SCCSwitch) SetTeamEthernetEnabled(enabled bool) error {
 	scc.mutex.Lock()
 	defer scc.mutex.Unlock()
+
+	if !scc.IsEnabled() {
+		// No address configured, so this alliance has no SCC switch to drive.
+		scc.Status = "DISABLED"
+		return nil
+	}
 
 	scc.Status = "CONFIGURING"
 

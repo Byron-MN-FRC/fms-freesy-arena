@@ -134,3 +134,22 @@ func mockSSHSwitch(t *testing.T, port int, username, password string, commands *
 	}()
 	time.Sleep(100 * time.Millisecond) // Give it some time to open the socket.
 }
+
+// SCC management is one setting covering both alliances, so an alliance with no SCC switch leaves its address
+// blank. Without this it dials "dial tcp :22" and logs an error on every match transition.
+func TestSCCSwitchWithoutAddressIsSkipped(t *testing.T) {
+	for _, address := range []string{"", "   "} {
+		scc := NewSCCSwitch(address, "username", "password", []string{"up"}, []string{"down"})
+		assert.False(t, scc.IsEnabled())
+
+		// Would block for the connect timeout if it actually dialed.
+		startTime := time.Now()
+		assert.Nil(t, scc.SetTeamEthernetEnabled(true))
+		assert.Equal(t, "DISABLED", scc.Status)
+		assert.Nil(t, scc.SetTeamEthernetEnabled(false))
+		assert.Equal(t, "DISABLED", scc.Status)
+		assert.Less(t, time.Since(startTime), time.Second)
+	}
+
+	assert.True(t, NewSCCSwitch("10.0.100.40", "username", "password", nil, nil).IsEnabled())
+}
